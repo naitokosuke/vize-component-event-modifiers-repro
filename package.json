@@ -1,0 +1,19 @@
+{
+  "name": "vize-component-event-modifiers-repro",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:vue": "vite build --config vite.vue.config.js",
+    "build:vize": "vite build --config vite.vize.config.js",
+    "check": "pnpm build:vue && pnpm build:vize && node check.js"
+  },
+  "dependencies": {
+    "vue": "3.6.0-rc.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.10",
+    "@vizejs/vite-plugin": "0.587.0",
+    "happy-dom": "21.0.4",
+    "vite": "8.3.5"
+  }
+}
