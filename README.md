@@ -1,6 +1,6 @@
 # vize-component-event-modifiers-repro
 
-Minimal reproduction: in Vapor mode, [vize](https://github.com/ubugeeei-prod/vize) drops event modifiers written on a component. `.prevent`, `.stop`, key modifiers such as `.enter`, and `.once` are all lost, with no warning. `@vue/compiler-sfc` keeps them, and so does vize in non-Vapor mode.
+Minimal reproduction: in Vapor mode, [vize](https://github.com/ubugeeei-prod/vize) drops event modifiers written on a component, with no warning. `.prevent`, key modifiers such as `.enter`, and `.once` are all lost. `@vue/compiler-sfc` keeps them, and so does vize in non-Vapor mode.
 
 ## Steps
 
@@ -9,7 +9,7 @@ pnpm install
 pnpm check
 ```
 
-`pnpm check` builds the same app twice, once with [`@vitejs/plugin-vue`](./vite.vue.config.js) and once with [`@vizejs/vite-plugin`](./vite.vize.config.js). It then mounts each build in happy-dom, fires the same events at both ([`check.js`](./check.js)), and prints what the handlers saw.
+`pnpm check` builds the same app twice: once with [`@vitejs/plugin-vue`](./vite.vue.config.js) and once with [`@vizejs/vite-plugin`](./vite.vize.config.js). Both use the same Vue runtime. [`check.js`](./check.js) then mounts each build in happy-dom, fires the same events at both, and compares what the handlers saw with what the modifiers mean. It exits 1 if either build differs.
 
 [`src/App.vue`](./src/App.vue):
 
@@ -18,38 +18,34 @@ pnpm check
 import Box from "./Box.vue";
 import Pinger from "./Pinger.vue";
 
-const log = (window.log = []);
-const outer = () => log.push("outer click");
-const submit = (e) => log.push(`submit defaultPrevented=${e.defaultPrevented}`);
-const click = () => log.push("box click");
-const key = (e) => log.push(`keydown ${e.key}`);
-const ping = () => log.push("ping");
+const seen = (window.seen = []);
+const submit = (e) => seen.push(`submit, defaultPrevented: ${e.defaultPrevented}`);
+const key = (e) => seen.push(`keydown ${e.key}`);
+const ping = () => seen.push("ping");
 </script>
 
 <template>
-  <div @click="outer">
-    <Box @submit.prevent="submit" @click.stop="click" @keydown.enter="key" />
-  </div>
+  <Box @submit.prevent="submit" @keydown.enter="key" />
   <Pinger @ping.once="ping" />
 </template>
 ```
 
-- [`src/Box.vue`](./src/Box.vue) is `<form><slot /></form>` and declares no emits, so the three listeners fall through to its root `<form>`.
-- [`src/Pinger.vue`](./src/Pinger.vue) declares `emits: ["ping"]` and emits `ping` on each click of its button.
+- [`src/Box.vue`](./src/Box.vue) is `<form><slot /></form>` and declares no emits, so both listeners fall through to its root `<form>` ([v-on listener inheritance](https://vuejs.org/guide/components/attrs.html#v-on-listener-inheritance)).
+- [`src/Pinger.vue`](./src/Pinger.vue) declares `emits: ["ping"]` and emits `ping` each time its button is clicked. `.once` is [documented for component events](https://vuejs.org/guide/components/events.html#emitting-and-listening-to-events).
 
-`check.js` dispatches the following:
+`check.js` fires these, in this order:
 
-- one cancelable `submit`, one `click`, then a `keydown` for `a` and one for `Enter`, all on the `<form>`
-- two clicks on Pinger's button
+1. one cancelable `submit` on the `<form>`
+2. a `keydown` for `a`, then one for `Enter`, on the `<form>`
+3. two clicks on Pinger's button
 
 ## Expected
 
-The `@vitejs/plugin-vue` build:
+What the `@vitejs/plugin-vue` build prints:
 
 ```
---- vue ---
-submit defaultPrevented=true
-box click
+--- vue: as expected ---
+submit, defaultPrevented: true
 keydown Enter
 ping
 native submit cancelled: true
@@ -57,13 +53,11 @@ native submit cancelled: true
 
 ## Actual
 
-The `@vizejs/vite-plugin` build:
+What the `@vizejs/vite-plugin` build prints. `pnpm check` then exits 1:
 
 ```
---- vize ---
-submit defaultPrevented=false
-box click
-outer click
+--- vize: NOT as expected ---
+submit, defaultPrevented: false
 keydown a
 keydown Enter
 ping
@@ -71,46 +65,53 @@ ping
 native submit cancelled: false
 ```
 
-| Modifier | What vize does instead |
-| --- | --- |
-| `.prevent` | The native submit is not cancelled. In a browser, the page navigates. |
-| `.stop` | The click reaches the outer `<div>`. |
-| `.enter` | The handler runs for any key. |
-| `.once` | The handler runs on every `ping`, not just the first. |
+- `.prevent`: the native submit is not cancelled. In a browser, the page navigates.
+- `.enter`: the handler runs for any key.
+- `.once`: the handler runs on every `ping`.
 
 ## Notes
 
-The prop object each compiler passes to `<Box>` and `<Pinger>` in Vapor mode:
+These are the props each compiler gives `<Box>` and `<Pinger>` for `src/App.vue`.
 
-- `@vue/compiler-sfc` 3.6.0-rc.13 (`compileTemplate({ vapor: true })`):
+`@vue/compiler-sfc` 3.6.0-rc.13 (`compileTemplate({ vapor: true })`):
 
-  ```js
-  onSubmit: () => _withModifiers(_ctx.submit, ["prevent"]),
-  onClick: () => _withModifiers(_ctx.click, ["stop"]),
-  onKeydown: () => _withKeys(_ctx.key, ["enter"])
-  // and for <Pinger>
-  onPingOnce: () => _ctx.ping
-  ```
+```js
+onSubmit: () => _withModifiers(_ctx.submit, ["prevent"]),
+onKeydown: () => _withKeys(_ctx.key, ["enter"])
+const n1 = _createAssetComponent("Pinger", { onPingOnce: () => _ctx.ping })
+```
 
-- `@vizejs/native` 0.587.0 (`compileSfc(src, { vapor: true })`):
+`@vizejs/native` 0.587.0 (`compileSfc(src, { vapor: true })`):
 
-  ```js
-  onSubmit: () => (_ctx.submit),
-  onClick: () => (_ctx.click),
-  onKeydown: () => (_ctx.key)
-  // and for <Pinger>
-  onPing: () => (_ctx.ping)
-  ```
+```js
+onSubmit: () => (_ctx.submit),
+onKeydown: () => (_ctx.key)
+const n1 = _createComponentWithFallback(_component_Pinger, { onPing: () => (_ctx.ping) }, null, false)
+```
 
-On a native element, vize keeps the modifier. `<form @submit.prevent="submit">` compiles to `_on(n1, "submit", _withModifiers(e => _ctx.submit(e), ["prevent"]))`.
+The same file, with `<script setup>` in place of `<script setup vapor>`, keeps the modifiers in vize:
 
-Vize's non-Vapor output keeps all four: `_withModifiers(…, ["prevent"])`, `_withModifiers(…, ["stop"])`, `_withKeys(…, ["enter"])` and `onPingOnce`.
+```js
+onSubmit: _withModifiers($setup.submit, ["prevent"]),
+onKeydown: _withKeys($setup.key, ["enter"])
+_createVNode($setup.Pinger, { onPingOnce: $setup.ping }, null, 8 /* PROPS */, ["onPingOnce"])
+```
 
-In vize 0.587.0, [`component_prop_expression_value`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/generate/operations/component_props.rs#L296-L325) emits a component's handler prop as the plain handler expression ([L314-L320](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/generate/operations/component_props.rs#L314-L320)). The modifiers parsed in [`steps/v_on.rs`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/steps/v_on.rs#L79-L98) are applied only to element events.
+In Vapor mode, vize also keeps the modifier on a native element. `.stop` on a component is dropped the same way:
 
-The [Vue docs](https://vuejs.org/guide/components/events.html) say `.once` is supported on component event listeners. `.prevent`, `.stop` and key modifiers act on the native event that a [fallthrough listener](https://vuejs.org/guide/components/attrs.html#v-on-listener-inheritance) receives.
+```vue
+<form @submit.prevent="submit"></form>
+<Box @click.stop="go" />
+```
 
-vize 0.474.0 and 0.562.0 compile it to the same output.
+```js
+const n1 = _createComponentWithFallback(_component_Box, { onClick: () => (_ctx.go) }, null, false)
+_on(n0, "submit", _withModifiers(e => _ctx.submit(e), ["prevent"]))
+```
+
+In vize 0.587.0, [`component_prop_expression_value`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/generate/operations/component_props.rs#L296-L325) emits a component's handler prop as the bare handler expression ([L314-L320](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/generate/operations/component_props.rs#L314-L320)). The modifiers parsed in [`steps/v_on.rs`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/steps/v_on.rs#L79-L98) are applied only to element events.
+
+vize 0.474.0, 0.480.0 and 0.562.0 drop all three the same way.
 
 ## Environment
 
