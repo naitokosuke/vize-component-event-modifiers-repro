@@ -1,5 +1,7 @@
 # vize-component-event-modifiers-repro
 
+Reported as [ubugeeei-prod/vize#10894](https://github.com/ubugeeei-prod/vize/issues/10894).
+
 Minimal reproduction: in Vapor mode, [vize](https://github.com/ubugeeei-prod/vize) drops event modifiers written on a component, with no warning. `.prevent`, key modifiers such as `.enter`, and `.once` are all lost. `@vue/compiler-sfc` keeps them, and so does vize in non-Vapor mode.
 
 ## Steps
