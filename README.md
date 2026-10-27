@@ -109,9 +109,29 @@ const n1 = _createComponentWithFallback(_component_Box, { onClick: () => (_ctx.g
 _on(n0, "submit", _withModifiers(e => _ctx.submit(e), ["prevent"]))
 ```
 
-In vize 0.587.0, [`component_prop_expression_value`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/generate/operations/component_props.rs#L296-L325) emits a component's handler prop as the bare handler expression ([L314-L320](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/generate/operations/component_props.rs#L314-L320)). The modifiers parsed in [`steps/v_on.rs`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/steps/v_on.rs#L79-L98) are applied only to element events.
+### Where the modifiers are lost
 
-vize 0.474.0, 0.480.0 and 0.562.0 drop all three the same way.
+In Vue's compiler, a `v-on` on a component carries its modifiers into the IR as `handlerModifiers` ([`compiler-vapor/src/transforms/vOn.ts`](https://github.com/vuejs/core/blob/v3.6.0-rc.13/packages/compiler-vapor/src/transforms/vOn.ts#L104-L128)). Codegen wraps the handler from them.
+
+vize 0.587.0 has nowhere to put them:
+
+- [`IRProp`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/ir/props.rs#L25-L30) has `key`, `values`, `is_component` and `value_kind`, but no modifiers.
+- The component lowering of `v-on` ([`lower/element/component.rs`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/lower/element/component.rs#L160-L184)) builds the `onX` key and the handler value, and never reads `dir.modifiers`. The same file does read modifiers for `v-bind` and `v-model` (`modelModifiers`).
+- So [`component_prop_expression_value`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/generate/operations/component_props.rs#L314-L320) can only emit the bare handler.
+- Element events take another path, [`steps/v_on.rs`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/crates/vize_atelier_vapor/src/steps/v_on.rs#L79-L98) → `SetEventIRNode`, which keeps `EventModifiers`.
+
+### Why the Vapor parity corpus does not catch it
+
+The corpus has this exact upstream case: `up.transforms.transformElement.36`, `<Foo @keydown.enter.prevent="a" @keydown.esc.prevent="b" />`, in [`upstream-compiler-vapor.json`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/tests/_fixtures/vapor-parity/upstream-compiler-vapor.json). Upstream asserts `_withKeys(_withModifiers(_ctx.a, ["prevent"]), ["enter"])` for it ([`transformElement.spec.ts`](https://github.com/vuejs/core/blob/v3.6.0-rc.11/packages/compiler-vapor/__tests__/transforms/transformElement.spec.ts#L613-L621)). Two things let it pass anyway:
+
+- [`extract.ts`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/tests/tooling/support/vapor-parity/extract.ts#L77-L80) keeps only the first string argument of each `compile*()` call, so upstream's expected output is not kept.
+- [`mount.ts`](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/tests/tooling/support/vapor-parity/mount.ts#L74-L82) cannot observe any of the four modifiers:
+  - It fires `click`, `mouseenter`, `input`, `keyup` (Enter only) and `submit`, once each. A wrong key, a second event, and `keydown` are never sent, so `.enter`, `.once` and this case's handlers are never checked.
+  - Handler arguments are logged as `Event:<type>` ([L20-L22](https://github.com/ubugeeei-prod/vize/blob/v0.587.0/tests/tooling/support/vapor-parity/mount.ts#L20-L22)), so `defaultPrevented` (`.prevent`) and propagation (`.stop`) don't show.
+
+### Versions
+
+vize 0.474.0, 0.480.0 and 0.562.0 drop all three the same way, and so does `@vizejs/native` 0.588.0.
 
 ## Environment
 
